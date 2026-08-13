@@ -177,7 +177,8 @@
       <div class="pill" id="octPill">C3</div>
       <button class="btn" id="octUp">+</button>
     </div>
-    <button class="btn play" id="demoBtn">▶ La Resaka</button>
+    <button class="btn play" data-song="resaka">▶ La Resaka</button>
+    <button class="btn play" data-song="fernet">▶ Fernet</button>
     <div class="spacer"></div>
     <div class="hint">Tocá con el teclado &nbsp;·&nbsp; fila <b>Z S X D C…</b> grave &nbsp;·&nbsp; fila <b>Q 2 W 3 E…</b> aguda</div>
   </div>
@@ -487,32 +488,50 @@ function syncSliderFill(){
   });
 }
 
-/* ============ Demo: "La Resaka" (Supermerk2) ============ */
-// [midi, ms]  (null = silencio). En La menor; riff del intro.
-const RIFF=[
-  // Parte 1
-  [64,150],[64,150],[64,150],[64,150],[64,150],[null,90],
-  [69,200],[64,150],[69,240],[null,90],
-  [72,240],[72,240],[null,120],
-  [77,200],[76,200],[71,320],[null,200],
-  // Parte 2 (la que sube)
-  [76,180],[74,180],[71,180],[74,180],[76,300],[null,140],
-  [77,220],[76,400],[null,300],
-];
-let demoOn=false, demoNote=null;
-const demoBtn=document.getElementById('demoBtn');
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-
-function stopDemo(){
-  demoOn=false;
-  if(demoNote!==null){ noteOff(demoNote); demoNote=null; }
-  demoBtn.textContent='▶ La Resaka';
-  demoBtn.classList.remove('playing');
+/* ============ Demos (auto-play) ============ */
+// [midi, ms]  (null = silencio)
+function arp(chord, step){ // helper: arpegio r-m-h-m sobre un acorde
+  const [a,b,c]=chord;
+  return [[a,step],[b,step],[c,step],[b,step],[a,step],[b,step],[c,step],[b,step]];
 }
-async function runDemo(){
-  while(demoOn){
-    for(const [n,d] of RIFF){
-      if(!demoOn) break;
+const SONGS={
+  resaka:{ label:'La Resaka', seq:[
+    // La menor · riff del intro
+    [64,150],[64,150],[64,150],[64,150],[64,150],[null,90],
+    [69,200],[64,150],[69,240],[null,90],
+    [72,240],[72,240],[null,120],
+    [77,200],[76,200],[71,320],[null,200],
+    [76,180],[74,180],[71,180],[74,180],[76,300],[null,140],
+    [77,220],[76,400],[null,300],
+  ]},
+  fernet:{ label:'Fernet', seq:[
+    // Fa#m · Mi · Sim · Do#m  (arpegios, la base del tema)
+    ...arp([66,69,73],150),  // F#m: Fa# La Do#
+    ...arp([64,68,71],150),  // E:   Mi Sol# Si
+    ...arp([59,62,66],150),  // Bm:  Si Re Fa#
+    ...arp([61,64,68],150),  // C#m: Do# Mi Sol#
+  ]},
+};
+let playing=null, demoNote=null;   // playing = clave de la canción actual
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const songBtns=[...document.querySelectorAll('.btn.play')];
+
+function resetBtns(){
+  songBtns.forEach(b=>{
+    b.classList.remove('playing');
+    b.textContent='▶ '+SONGS[b.dataset.song].label;
+  });
+}
+function stopDemo(){
+  playing=null;
+  if(demoNote!==null){ noteOff(demoNote); demoNote=null; }
+  resetBtns();
+}
+async function runDemo(key){
+  const seq=SONGS[key].seq;
+  while(playing===key){
+    for(const [n,d] of seq){
+      if(playing!==key) break;
       const gap = n!==null ? Math.min(70, d*0.3) : 0;
       if(n!==null){ noteOn(n); demoNote=n; }
       await sleep(d-gap);
@@ -521,16 +540,21 @@ async function runDemo(){
     }
   }
 }
-demoBtn.onclick=()=>{
-  if(demoOn){ stopDemo(); return; }
-  startEngine(); initAudio();
-  if(AC.state==="suspended") AC.resume();
-  demoOn=true;
-  demoBtn.textContent='⏸ Parar';
-  demoBtn.classList.add('playing');
-  document.getElementById('statusMsg').textContent='Sonando: La Resaka · '+program.name;
-  runDemo();
-};
+songBtns.forEach(btn=>{
+  btn.onclick=()=>{
+    const key=btn.dataset.song;
+    const wasPlaying=playing;
+    stopDemo();
+    if(wasPlaying===key) return;      // era esta misma → toggle off
+    startEngine(); initAudio();
+    if(AC.state==="suspended") AC.resume();
+    playing=key;
+    btn.classList.add('playing');
+    btn.textContent='⏸ Parar';
+    document.getElementById('statusMsg').textContent='Sonando: '+SONGS[key].label+' · '+program.name;
+    runDemo(key);
+  };
+});
 
 buildKeyboard();
 updateLabels();
