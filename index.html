@@ -179,6 +179,7 @@
     </div>
     <button class="btn play" data-song="resaka">▶ La Resaka</button>
     <button class="btn play" data-song="fernet">▶ Fernet</button>
+    <button class="btn play" data-song="beso">▶ Un Beso y una Flor</button>
     <div class="spacer"></div>
     <div class="hint">Tocá con el teclado &nbsp;·&nbsp; fila <b>Z S X D C…</b> grave &nbsp;·&nbsp; fila <b>Q 2 W 3 E…</b> aguda</div>
   </div>
@@ -510,6 +511,13 @@ const SONGS={
     ...arp([64,68,71],150),  // E:   Mi Sol# Si
     ...arp([59,62,66],150),  // Bm:  Si Re Fa#
     ...arp([61,64,68],150),  // C#m: Do# Mi Sol#
+  ]},
+  beso:{ label:'Un Beso y una Flor', seq:[
+    // La · Mi/Sol# · Fa#m · Mi  (bajo descendente La Sol# Fa# Mi, arpegio ballad)
+    [57,300],[61,300],[64,300],[61,300],  // A     (La)
+    [56,300],[59,300],[64,300],[59,300],  // E/G#  (Mi con bajo Sol#)
+    [54,300],[57,300],[61,300],[57,300],  // F#m   (Fa#m)
+    [52,300],[56,300],[59,300],[56,300],  // E     (Mi)
   ]},
 };
 let playing=null, demoNote=null;   // playing = clave de la canción actual
