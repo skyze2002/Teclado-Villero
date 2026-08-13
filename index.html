@@ -83,6 +83,8 @@
     background:var(--panel2);border:1px solid var(--edge);color:var(--text);
     width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:16px;font-weight:700}
   .btn:active{transform:translateY(1px)}
+  .btn.play{width:auto;padding:0 14px;font-size:13px;font-weight:700;letter-spacing:.5px}
+  .btn.play.playing{background:var(--accent);color:#111;border-color:var(--accent);box-shadow:0 0 14px rgba(255,122,26,.5)}
   .pill{background:#0d0f14;border:1px solid var(--edge);border-radius:8px;padding:6px 12px;font-size:13px;
     font-weight:700;color:var(--accent2);min-width:70px;text-align:center;font-variant-numeric:tabular-nums}
   .lbl{font-size:11px;color:var(--dim);letter-spacing:1px;text-transform:uppercase}
@@ -175,6 +177,7 @@
       <div class="pill" id="octPill">C3</div>
       <button class="btn" id="octUp">+</button>
     </div>
+    <button class="btn play" id="demoBtn">▶ La Resaka</button>
     <div class="spacer"></div>
     <div class="hint">Tocá con el teclado &nbsp;·&nbsp; fila <b>Z S X D C…</b> grave &nbsp;·&nbsp; fila <b>Q 2 W 3 E…</b> aguda</div>
   </div>
@@ -483,6 +486,51 @@ function syncSliderFill(){
     el.style.setProperty('--p',p+'%');
   });
 }
+
+/* ============ Demo: "La Resaka" (Supermerk2) ============ */
+// [midi, ms]  (null = silencio). En La menor; riff del intro.
+const RIFF=[
+  // Parte 1
+  [64,150],[64,150],[64,150],[64,150],[64,150],[null,90],
+  [69,200],[64,150],[69,240],[null,90],
+  [72,240],[72,240],[null,120],
+  [77,200],[76,200],[71,320],[null,200],
+  // Parte 2 (la que sube)
+  [76,180],[74,180],[71,180],[74,180],[76,300],[null,140],
+  [77,220],[76,400],[null,300],
+];
+let demoOn=false, demoNote=null;
+const demoBtn=document.getElementById('demoBtn');
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+function stopDemo(){
+  demoOn=false;
+  if(demoNote!==null){ noteOff(demoNote); demoNote=null; }
+  demoBtn.textContent='▶ La Resaka';
+  demoBtn.classList.remove('playing');
+}
+async function runDemo(){
+  while(demoOn){
+    for(const [n,d] of RIFF){
+      if(!demoOn) break;
+      const gap = n!==null ? Math.min(70, d*0.3) : 0;
+      if(n!==null){ noteOn(n); demoNote=n; }
+      await sleep(d-gap);
+      if(n!==null){ noteOff(n); demoNote=null; }
+      if(gap) await sleep(gap);
+    }
+  }
+}
+demoBtn.onclick=()=>{
+  if(demoOn){ stopDemo(); return; }
+  startEngine(); initAudio();
+  if(AC.state==="suspended") AC.resume();
+  demoOn=true;
+  demoBtn.textContent='⏸ Parar';
+  demoBtn.classList.add('playing');
+  document.getElementById('statusMsg').textContent='Sonando: La Resaka · '+program.name;
+  runDemo();
+};
 
 buildKeyboard();
 updateLabels();
