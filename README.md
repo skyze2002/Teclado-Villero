@@ -22,8 +22,9 @@ Después abrí **http://localhost:8123/** en el navegador.
 
 ## 🎛️ Qué tiene
 
-- **8 programas** de síntesis por osciladores: Grand Piano, Electric Piano (con trémolo),
-  Draw Organ, Warm Strings, Analog Pad, Synth Lead, Synth Bass y Glass Bells.
+- **9 programas** de síntesis por osciladores: Piano Acústico (el de fábrica, síntesis aditiva
+  con armónicos), Grand Piano, Electric Piano (con trémolo), Draw Organ, Warm Strings, Analog Pad,
+  Synth Lead, Synth Bass y Glass Bells.
 - **Filtro** (cutoff + resonancia), **reverb**, envolvente (attack/release) y volumen, todo en vivo.
 - **Polifonía real de 16 voces** con voice stealing, teclado visual que se ilumina y compresor a la salida.
 - **Grabador con loop**: apretás REC, tocás, volvés a apretar y queda loopeando.
@@ -32,26 +33,34 @@ Después abrí **http://localhost:8123/** en el navegador.
 - **Entra siempre en pantalla**: el teclado queda fijo abajo y los controles scrollean solos.
   La cantidad de octavas a la vista se adapta al ancho (3 en desktop, 2 en tablet, 1 en celular)
   para que la tecla nunca quede más angosta que un dedo.
-- El **preset se guarda solo** en `localStorage` — programa, sliders, octava y BPM vuelven como los dejaste.
+- El **preset se guarda solo** en `localStorage` — programa, sliders, octava, BPM y velocidad
+  del cancionero vuelven como los dejaste.
 
 ## 🎵 Cancionero
 
-Ocho temas que se tocan solos iluminando las teclas para aprenderlas:
+Ocho temas que se tocan solos iluminando las teclas. Cada uno es la **base de acompañamiento**
+del tema: tonalidad, progresión de acordes y tempo sacados de cifrados públicos, tocados con el
+ritmo típico del género (tresillo villero, bajo + acorde a contratiempo de la cumbia y el
+cuarteto, arpegio de balada). No incluye la melodía: la base suena como el tema y la melodía la
+tocás vos encima.
 
-| Tema | Artista |
-|------|---------|
-| La Resaka | Supermerk2 |
-| Se Te Ve la Tanga | Damas Gratis |
-| No Me Arrepiento de Este Amor | Gilda |
-| El Bombón Asesino | Los Palmeras |
-| Mentirosa | Ráfaga |
-| Soy Cordobés | Rodrigo |
-| Fernet | Rei & Quevedo |
-| Un Beso y una Flor | Nino Bravo |
+| Tema | Artista | Tono | Tempo | Estilo |
+|------|---------|------|-------|--------|
+| La Resaka | Supermerk2 | La menor | ≈100 | tresillo villero |
+| Se Te Ve la Tanga | Damas Gratis | Re menor | ≈98 | tresillo villero |
+| No Me Arrepiento de Este Amor | Gilda | Do menor | ≈150 | cumbia |
+| El Bombón Asesino | Los Palmeras | Re menor | ≈100 | cumbia |
+| Mentirosa | Ráfaga | Fa menor | ≈94 | cumbia |
+| Soy Cordobés | Rodrigo | Mi menor | ≈125 | cuarteto (tunga-tunga) |
+| Fernet | Rei & Quevedo | Fa# menor | ≈100 | arpegio |
+| Un Beso y una Flor | Nino Bravo | La mayor | 83 | balada |
 
-Son transcripciones de oído del riff o el arpegio principal, no la partitura completa.
-Viven en el objeto `SONGS` como pares `[nota MIDI, milisegundos]`, así que agregar o
-corregir un tema es editar un array.
+`≈` = tempo estimado (no hay dato publicado). El slider **Velocidad** (50–150%) lo ajusta en
+vivo, así lo emparejás de oído con la grabación.
+
+Los temas viven en el objeto `SONGS`: cada evento es `[nota, beats]`, donde la nota es un MIDI,
+un array de MIDIs (acorde) o `null` (silencio), y los helpers `trip`, `contra`, `arp` y `ballad`
+arman un compás por acorde. Agregar un tema es escribir su progresión, tono y tempo.
 
 ## ⌨️ Cómo tocar
 
