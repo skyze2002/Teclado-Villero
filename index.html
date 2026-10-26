@@ -110,7 +110,9 @@
   .prog.active small{color:var(--accent)}
   .song.playing{border-color:var(--accent2);background:linear-gradient(180deg,#152134,#20232c);box-shadow:0 0 0 1px var(--accent2) inset}
   .song.playing small{color:var(--accent2)}
-  .ctrl.speedctl{max-width:360px;margin-bottom:12px}
+  .songctl{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:12px}
+  .songctl .ctrl{flex:1 1 180px;max-width:300px;margin-bottom:0}
+  .songctl .btn{margin-bottom:-4px}
 
   .ctrl{margin-bottom:12px}
   .ctrl:last-child{margin-bottom:0}
@@ -256,9 +258,16 @@
 
     <div class="card wide">
       <h3>Cancionero <em>la base de cada tema: tocá la melodía encima</em></h3>
-      <div class="ctrl speedctl">
-        <label>Velocidad <b id="speedV">100%</b></label>
-        <input type="range" id="speed" min="50" max="150" step="5" value="100">
+      <div class="songctl">
+        <div class="ctrl">
+          <label>Velocidad <b id="speedV">100%</b></label>
+          <input type="range" id="speed" min="50" max="150" step="5" value="100">
+        </div>
+        <button class="btn wide on" id="drumBtn" type="button" title="Batería del cancionero">🥁 RITMO ON</button>
+        <div class="ctrl">
+          <label>Volumen ritmo <b id="drumVolV">70%</b></label>
+          <input type="range" id="drumVol" min="0" max="100" step="1" value="70">
+        </div>
       </div>
       <div class="songs" id="songs"></div>
     </div>
@@ -309,14 +318,14 @@
 
 <script>
 /* ============ Audio engine ============ */
-let AC=null, master=null, comp=null, fxIn=null, dry=null, wet=null, conv=null, metroBus=null;
+let AC=null, master=null, comp=null, fxIn=null, dry=null, wet=null, conv=null, metroBus=null, drumBus=null, noiseBuf=null;
 const MAX_VOICES=16;
 const voices=new Map();      // "src:midi" -> voice   (Map conserva el orden = voice stealing FIFO)
 const noteRefs=new Map();    // midi -> cuántas voces lo están sonando (para iluminar la tecla)
 const heldKeys=new Map();    // tecla física -> midi que disparó (para no colgar notas al cambiar de octava)
 let started=false;
 
-const DEFAULTS={cutoff:4200,reso:4,reverb:0.25,attack:0.006,release:0.30,volume:0.75,speed:1};
+const DEFAULTS={cutoff:4200,reso:4,reverb:0.25,attack:0.006,release:0.30,volume:0.75,speed:1,drums:1,drumVol:0.7};
 const params={...DEFAULTS};
 
 /* ---- Programs (osc-based timbres) ---- */
@@ -383,6 +392,10 @@ function initAudio(){
   fxIn.connect(conv).connect(wet).connect(master);
   metroBus=AC.createGain(); metroBus.gain.value=0.5;  // el click no pasa por el reverb ni por el volumen
   metroBus.connect(comp);
+  drumBus=AC.createGain(); drumBus.gain.value=params.drumVol;  // batería: sigue al volumen, sin reverb
+  drumBus.connect(master);
+  noiseBuf=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);
+  const nd=noiseBuf.getChannelData(0); for(let i=0;i<nd.length;i++) nd[i]=Math.random()*2-1;
   master.connect(comp).connect(AC.destination);
 }
 function resumeAudio(){ if(AC && AC.state==="suspended") AC.resume(); }
@@ -408,8 +421,16 @@ function noteOn(midi, src='u'){
   const id=src+':'+midi;
   if(voices.has(id)) return;
   if(voices.size>=MAX_VOICES) killVoice(voices.keys().next().value, 0.04); // voice stealing: la más vieja
+  voices.set(id,{midi,...buildVoice(midi,AC.currentTime)});
+  refInc(midi);
+  if(recording && isUserSrc(src)) recEvents.push({m:midi,on:1,t:performance.now()-recStart});
+}
+// el grabador sólo guarda lo que tocás vos (teclado o dedos), no el cancionero ni el propio loop
+function isUserSrc(src){ return src==='u' || src[0]==='p'; }
 
-  const t=AC.currentTime;
+/* Arma los nodos de una nota que arranca en t. Sin tOff queda sostenida hasta killVoice (teclado);
+   con tOff se agenda la envolvente completa por adelantado sobre el reloj de audio (cancionero). */
+function buildVoice(midi, t, tOff){
   const amp=AC.createGain(); amp.gain.value=0;
   const filter=AC.createBiquadFilter();
   filter.type="lowpass";
@@ -440,17 +461,27 @@ function noteOn(midi, src='u'){
   last.connect(amp).connect(fxIn);
 
   const e=program.amp;
-  const peak=0.28;
-  amp.gain.cancelScheduledValues(t);
-  amp.gain.setValueAtTime(0.0001,t);
-  amp.gain.linearRampToValueAtTime(peak, t+params.attack + e.a*0.5);
-  amp.gain.linearRampToValueAtTime(peak*e.s, t+params.attack+e.a*0.5+e.d);
-  voices.set(id,{midi,amp,filter,oscList,lfo,env:e,peak});
-  refInc(midi);
-  if(recording && isUserSrc(src)) recEvents.push({m:midi,on:1,t:performance.now()-recStart});
+  const peak=0.28, A=Math.max(0.002, params.attack + e.a*0.5), D=e.d, S=peak*e.s;
+  const g=amp.gain;
+  g.setValueAtTime(0.0001,t);
+  if(tOff===undefined){
+    g.linearRampToValueAtTime(peak, t+A);
+    g.linearRampToValueAtTime(S, t+A+D);
+  }else{
+    // sólo los tramos que terminan antes del noteOff, después rampa al nivel exacto de ese instante y release
+    const lvl = tOff<t+A ? 0.0001+(peak-0.0001)*(tOff-t)/A
+              : tOff<t+A+D ? peak+(S-peak)*(tOff-t-A)/D : S;
+    if(t+A<tOff) g.linearRampToValueAtTime(peak, t+A);
+    if(t+A+D<tOff) g.linearRampToValueAtTime(S, t+A+D);
+    g.linearRampToValueAtTime(Math.max(lvl,0.0001), tOff);
+    const r=Math.max(params.release, e.r*0.25);
+    g.setTargetAtTime(0.0001, tOff, r/4);
+    const stopAt=tOff+r*1.25+0.05;
+    oscList.forEach(o=>o.stop(stopAt));
+    if(lfo) lfo.stop(stopAt);
+  }
+  return {amp,filter,oscList,lfo,env:e,peak};
 }
-// el grabador sólo guarda lo que tocás vos (teclado o dedos), no el cancionero ni el propio loop
-function isUserSrc(src){ return src==='u' || src[0]==='p'; }
 
 function killVoice(id, relOverride){
   const v=voices.get(id); if(!v) return;
@@ -675,6 +706,13 @@ bind('atk',v=>{params.attack=v/1000;});
 bind('rel',v=>{params.release=v/1000;});
 bind('vol',v=>{params.volume=v/100; if(master) master.gain.setTargetAtTime(params.volume,AC.currentTime,0.02);});
 bind('speed',v=>{params.speed=v/100;});   // el cancionero lo lee nota a nota: cambia en vivo
+bind('drumVol',v=>{params.drumVol=v/100; if(drumBus) drumBus.gain.setTargetAtTime(params.drumVol,AC.currentTime,0.02);});
+const drumBtn=document.getElementById('drumBtn');
+function syncDrumBtn(){
+  drumBtn.classList.toggle('on',!!params.drums);
+  drumBtn.textContent=params.drums?'🥁 RITMO ON':'🥁 RITMO OFF';
+}
+drumBtn.onclick=e=>{ params.drums=params.drums?0:1; syncDrumBtn(); savePreset(); e.currentTarget.blur(); };
 
 function updateLabels(){
   cutoffV.textContent=Math.round(params.cutoff)+' Hz';
@@ -685,6 +723,7 @@ function updateLabels(){
   volV.textContent=Math.round(params.volume*100)+'%';
   speedV.textContent=Math.round(params.speed*100)+'%'+
     (playing?` · ${Math.round(SONGS[playing].bpm*params.speed)} BPM`:'');
+  drumVolV.textContent=Math.round(params.drumVol*100)+'%';
 }
 function syncSliderFill(){
   document.querySelectorAll('input[type=range]').forEach(el=>{
@@ -709,10 +748,12 @@ function applyState(s){
           : null;
   if(p) program=p;
   [...progEl.children].forEach((x,j)=>x.classList.toggle('active',PROGRAMS[j]===program));
-  ['cutoff','reso','reverb','attack','release','volume','speed'].forEach(k=>{
+  ['cutoff','reso','reverb','attack','release','volume','speed','drums','drumVol'].forEach(k=>{
     if(typeof s[k]==='number' && isFinite(s[k])) params[k]=s[k];
   });
   params.speed=clamp(params.speed,0.5,1.5);
+  params.drums=params.drums?1:0;
+  params.drumVol=clamp(params.drumVol,0,1);
   params.cutoff=clamp(params.cutoff,120,12000);
   params.reso=clamp(params.reso,0.1,20);
   params.reverb=clamp(params.reverb,0,1);
@@ -729,6 +770,9 @@ function applyState(s){
   document.getElementById('rel').value=Math.round(params.release*1000);
   document.getElementById('vol').value=Math.round(params.volume*100);
   document.getElementById('speed').value=Math.round(params.speed*100);
+  document.getElementById('drumVol').value=Math.round(params.drumVol*100);
+  if(drumBus) drumBus.gain.value=params.drumVol;
+  syncDrumBtn();
   document.getElementById('bpm').value=metroBpm;
   bpmPill.textContent=metroBpm+' BPM';
   document.getElementById('octPill').textContent=noteName(baseMidi);
@@ -864,6 +908,65 @@ function stopLoop(){
   updateRecUI();
 }
 
+/* ============ Batería sintetizada (todo con osciladores y ruido, sin samples) ============ */
+function env(g,t,peak,dur){ // golpe: sube al toque y cae exponencial
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(peak,t+0.003);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+}
+function noise(t,dur,type,freq,q){
+  const s=AC.createBufferSource(); s.buffer=noiseBuf;
+  const f=AC.createBiquadFilter(); f.type=type; f.frequency.value=freq; if(q) f.Q.value=q;
+  const g=AC.createGain();
+  s.connect(f).connect(g).connect(drumBus);
+  s.start(t, Math.random()*0.5); s.stop(t+dur+0.02);
+  return g;
+}
+function tone(t,dur,type,f0,f1){
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.type=type; o.frequency.setValueAtTime(f0,t);
+  if(f1) o.frequency.exponentialRampToValueAtTime(f1,t+dur*0.6);
+  o.connect(g).connect(drumBus);
+  o.start(t); o.stop(t+dur+0.02);
+  return g;
+}
+const DRUM={
+  kick:  t=>env(tone(t,0.35,'sine',140,45),t,0.9,0.35),
+  snare: t=>{ env(noise(t,0.18,'highpass',1500),t,0.45,0.18); env(tone(t,0.1,'triangle',190),t,0.3,0.1); },
+  rim:   t=>env(tone(t,0.035,'triangle',1700),t,0.25,0.035),
+  hat:   t=>env(noise(t,0.05,'highpass',7000),t,0.22,0.05),
+  ohat:  t=>env(noise(t,0.22,'highpass',6500),t,0.18,0.22),
+  timbal:t=>{ env(tone(t,0.16,'triangle',540,500),t,0.35,0.16); env(tone(t,0.12,'square',810),t,0.06,0.12);
+              env(noise(t,0.08,'highpass',3000),t,0.15,0.08); },
+  congaH:t=>env(tone(t,0.16,'sine',340,300),t,0.45,0.16),
+  congaL:t=>env(tone(t,0.22,'sine',220,190),t,0.5,0.22),
+  guiroL:t=>scrape(t,4,0.028),   // raspada larga
+  guiroS:t=>scrape(t,2,0.022),   // raspada corta
+};
+function scrape(t,pulses,dt){ // güiro: varios golpecitos de ruido filtrado muy seguidos
+  const g=noise(t,pulses*dt+0.02,'bandpass',3800,1.4);
+  g.gain.setValueAtTime(0.0001,t);
+  for(let i=0;i<pulses;i++){
+    g.gain.setValueAtTime(0.22,t+i*dt);
+    g.gain.linearRampToValueAtTime(0.02,t+i*dt+dt*0.8);
+  }
+  g.gain.linearRampToValueAtTime(0.0001,t+pulses*dt+0.01);
+}
+/* Patrones de un compás en semicorcheas (0..15). Son los esquemas típicos de cada género. */
+const GROOVES={
+  villero: {kick:[0,8], timbal:[4,12], guiroL:[0,4,8,12], guiroS:[2,3,6,7,10,11,14,15], hat:[2,6,10,14]},
+  cumbia:  {kick:[0,8], congaH:[6,14], congaL:[7,15], guiroL:[0,4,8,12], guiroS:[2,3,6,7,10,11,14,15]},
+  cuarteto:{kick:[0,4,8,12], rim:[4,12], ohat:[2,6,10,14]},
+  balada:  {kick:[0,10], rim:[4,12], hat:[0,2,4,6,8,10,12,14]},
+  pop:     {kick:[0,7,8], snare:[4,12], hat:[0,2,4,6,8,10,12,14]},
+};
+const GROOVE_STEPS={};   // groove -> [[instr...] por paso], precalculado
+Object.entries(GROOVES).forEach(([name,g])=>{
+  const steps=Array.from({length:16},()=>[]);
+  Object.entries(g).forEach(([ins,list])=>list.forEach(i=>steps[i].push(ins)));
+  GROOVE_STEPS[name]=steps;
+});
+
 /* ============ Cancionero (auto-play) ============ */
 /* Cada tema es la BASE de acompañamiento: tonalidad, progresión de acordes y tempo sacados de
    cifrados públicos, tocados con el ritmo típico del género. No incluye la melodía (es la parte
@@ -899,40 +1002,58 @@ function ballad(b,[x,y,z]){ // bajo + arpegio en corcheas (balada)
   return [[b,N8],[x,N8],[y,N8],[z,N8],[y,N8],[x,N8],[y,N8],[x,N8]];
 }
 const bars=(style,names)=>names.flatMap(style);
+/* sound: el timbre y los ajustes que mejor le quedan a la base; se aplican solos al elegir el tema.
+   groove: el ritmo de batería (ver GROOVES). */
 const SONGS={
-  resaka:{ label:'La Resaka', artist:'Supermerk2', key:'La menor', bpm:100, est:true, gate:0.7,
+  resaka:{ label:'La Resaka', artist:'Supermerk2', key:'La menor', bpm:100, est:true, gate:0.7, groove:'villero',
+    sound:{prog:'Synth Lead', cutoff:3200, reso:3, reverb:0.15, attack:0.002, release:0.12},
     // Mi · Lam · Fa · Mi · Lam, con el tresillo del teclado villero
     seq:bars(trip,['E','Am','F','E','Am']) },
-  tanga:{ label:'Se Te Ve la Tanga', artist:'Damas Gratis', key:'Re menor', bpm:98, est:true, gate:0.55,
+  tanga:{ label:'Se Te Ve la Tanga', artist:'Damas Gratis', key:'Re menor', bpm:98, est:true, gate:0.55, groove:'villero',
+    sound:{prog:'Synth Lead', cutoff:2800, reso:4, reverb:0.12, attack:0.002, release:0.1},
     // Rem · Do · Solm · Rem · Sib · Do · Lam · Rem  (notas repetidas de a tres, bien staccato)
     seq:bars(trip,['Dm','C','Gm','Dm','Bb','C','Am','Dm']) },
-  gilda:{ label:'No Me Arrepiento de Este Amor', artist:'Gilda', key:'Do menor', bpm:150, est:true, gate:0.6,
+  gilda:{ label:'No Me Arrepiento de Este Amor', artist:'Gilda', key:'Do menor', bpm:150, est:true, gate:0.6, groove:'cumbia',
+    sound:{prog:'Draw Organ', cutoff:5000, reso:1, reverb:0.2, attack:0.004, release:0.12},
     // tono de la grabación (los cifrados lo escriben en Lam): Dom · Mib · Fam · Sol, Dom · Mib · Sib
     seq:bars(contra,['Cm','Eb','Fm','G','Cm','Cm','Eb','Fm','G','Cm','Eb','Bb']) },
-  bombon:{ label:'El Bombón Asesino', artist:'Los Palmeras', key:'Re menor', bpm:100, est:true, gate:0.6,
+  bombon:{ label:'El Bombón Asesino', artist:'Los Palmeras', key:'Re menor', bpm:100, est:true, gate:0.6, groove:'cumbia',
+    sound:{prog:'Draw Organ', cutoff:4500, reso:1, reverb:0.18, attack:0.004, release:0.12},
     // Rem · La: el vaivén de toda la canción
     seq:bars(contra,['Dm','A','Dm','A']) },
-  mentirosa:{ label:'Mentirosa', artist:'Ráfaga', key:'Fa menor', bpm:94, est:true, gate:0.6,
+  mentirosa:{ label:'Mentirosa', artist:'Ráfaga', key:'Fa menor', bpm:94, est:true, gate:0.6, groove:'cumbia',
+    sound:{prog:'Synth Lead', cutoff:3600, reso:2, reverb:0.2, attack:0.003, release:0.15},
     // Fam · Mib · Reb · Lab · Mib · Fam · Mib · Reb  (estribillo)
     seq:bars(contra,['Fm','Eb','Db','Ab','Eb','Fm','Eb','Db']) },
-  cordobes:{ label:'Soy Cordobés', artist:'Rodrigo', key:'Mi menor', bpm:125, est:true, gate:0.45,
+  cordobes:{ label:'Soy Cordobés', artist:'Rodrigo', key:'Mi menor', bpm:125, est:true, gate:0.45, groove:'cuarteto',
+    sound:{prog:'Piano Acústico', cutoff:6500, reso:0.8, reverb:0.15, attack:0.002, release:0.15},
     // intro: Si · Si · Mim · Mim (x2) con el "tunga-tunga" del cuarteto
     seq:bars(contra,['B','B','Em','Em','B','B','Em','Em']) },
-  fernet:{ label:'Fernet', artist:'Rei & Quevedo', key:'Fa# menor', bpm:100, est:true, gate:0.8,
+  fernet:{ label:'Fernet', artist:'Rei & Quevedo', key:'Fa# menor', bpm:100, est:true, gate:0.8, groove:'pop',
+    sound:{prog:'Electric Piano', cutoff:3800, reso:1, reverb:0.3, attack:0.004, release:0.25},
     // Fa#m · Mi · Sim · Do#m  (arpegios en semicorcheas)
     seq:[...arp([66,69,73],N16), ...arp([64,68,71],N16), ...arp([59,62,66],N16), ...arp([61,64,68],N16)] },
-  beso:{ label:'Un Beso y una Flor', artist:'Nino Bravo', key:'La mayor', bpm:83, gate:0.95,
+  beso:{ label:'Un Beso y una Flor', artist:'Nino Bravo', key:'La mayor', bpm:83, gate:0.95, groove:'balada',
+    sound:{prog:'Piano Acústico', cutoff:6500, reso:0.8, reverb:0.35, attack:0.004, release:0.6},
     // La · Mi/Sol# · Fa#m · Mi  con el bajo bajando La Sol# Fa# Mi
     seq:[...ballad(57,[61,64,69]), ...ballad(56,[59,64,68]), ...ballad(54,[57,61,66]), ...ballad(52,[56,59,64])] },
+  nsp:{ label:'No Somos Perfectos', artist:'Lauta, Valentino Merlo & Tote', key:'tono a confirmar', bpm:87, gate:0.6,
+    groove:'cumbia', pending:true,
+    sound:{prog:'Piano Acústico', cutoff:6500, reso:0.8, reverb:0.2, attack:0.002, release:0.2},
+    // tema de agosto de 2026: hay tempo publicado (87 BPM) pero todavía no hay acordes. Por ahora sólo ritmo:
+    // cuando se confirme la progresión va acá, ej. seq:bars(contra,['Am','F','C','G'])
+    seq:[[null,4]] },
 };
-let playing=null, demoTok=0;
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+let playing=null;
 const songsEl=document.getElementById('songs');
 const songBtns={};
 Object.entries(SONGS).forEach(([key,s])=>{
   const b=document.createElement('button');
   b.className='prog song'; b.type='button'; b.dataset.song=key;
-  b.innerHTML=`<span>▶ ${s.label}</span><small>${s.artist} · ${s.key} · ${s.est?'≈':''}${s.bpm} BPM</small>`;
+  const info = s.pending ? `${s.artist} · ${s.bpm} BPM · sólo ritmo`
+                         : `${s.artist} · ${s.key} · ${s.est?'≈':''}${s.bpm} BPM`;
+  b.innerHTML=`<span>▶ ${s.label}</span><small>${info}</small>`;
+  b.title=`${s.label} — ${s.sound.prog}, ritmo ${s.groove}`;
   b.onclick=()=>{ toggleSong(key); b.blur(); };
   songsEl.appendChild(b);
   songBtns[key]=b;
@@ -943,38 +1064,92 @@ function resetSongBtns(){
     b.querySelector('span').textContent='▶ '+SONGS[k].label;
   });
 }
+
+/* Secuenciador sobre el reloj del AudioContext (como el metrónomo): notas y batería se agendan
+   con ~120 ms de anticipación en la misma línea de tiempo, así van siempre juntas y no derrapan.
+   Las posiciones se llevan en beats; anchorT/anchorBeat convierten beats a segundos y se
+   reanclan cuando cambia la velocidad, para que el cambio no corra la batería respecto de las notas. */
+const LOOKAHEAD=0.12;
+let seqState=null, seqTimer=null;
+const demoVoices=new Set();   // notas agendadas del cancionero (fuera del Map voices: no se roban con el teclado)
+
+function scheduleNote(m,tOn,tOff){
+  const v={m,...buildVoice(m,tOn,tOff),lit:false};
+  const now=AC.currentTime;
+  v.tA=setTimeout(()=>{ refInc(m); v.lit=true; }, Math.max(0,(tOn-now)*1000));
+  v.tB=setTimeout(()=>{ if(v.lit){ refDec(m); v.lit=false; } demoVoices.delete(v); }, Math.max(0,(tOff-now)*1000));
+  demoVoices.add(v);
+}
+function seqTick(){
+  const st=seqState; if(!st) return;
+  const s=SONGS[st.key], spb=60/(s.bpm*params.speed);
+  if(spb!==st.spb){   // cambió la velocidad: reanclamos en la frontera de lo ya agendado
+    const b=Math.min(st.noteBeat,st.stepBeat);
+    st.anchorT+= (b-st.anchorBeat)*st.spb; st.anchorBeat=b; st.spb=spb;
+  }
+  const timeOf=beat=>st.anchorT+(beat-st.anchorBeat)*spb;
+  const horizon=AC.currentTime+LOOKAHEAD;
+  if(timeOf(st.noteBeat)<AC.currentTime){   // pestaña en segundo plano: saltamos lo atrasado en vez de dispararlo junto
+    const lag=AC.currentTime-timeOf(st.noteBeat)+0.05;
+    st.anchorT+=lag;
+  }
+  while(timeOf(st.noteBeat)<horizon){
+    const [n,beats]=s.seq[st.idx];
+    const tOn=timeOf(st.noteBeat), tOff=tOn+beats*spb*s.gate;
+    if(n!==null) [].concat(n).forEach(m=>scheduleNote(m,tOn,tOff));
+    st.noteBeat+=beats;
+    st.idx=(st.idx+1)%s.seq.length;
+  }
+  while(timeOf(st.stepBeat)<horizon){
+    if(params.drums){
+      const t=timeOf(st.stepBeat);
+      GROOVE_STEPS[s.groove][st.step].forEach(ins=>DRUM[ins](t));
+    }
+    st.stepBeat+=0.25;
+    st.step=(st.step+1)%16;
+  }
+}
 function stopDemo(){
-  playing=null; demoTok++;      // el token corta el loop async viejo
-  releaseAll('d');              // apaga sólo las notas del demo ('d<tok>:'), las tuyas siguen
+  playing=null; seqState=null;
+  clearInterval(seqTimer); seqTimer=null;
+  if(AC){
+    const now=AC.currentTime;
+    demoVoices.forEach(v=>{   // corte inmediato: también las notas agendadas que todavía no arrancaron
+      clearTimeout(v.tA); clearTimeout(v.tB);
+      if(v.lit) refDec(v.m);
+      v.amp.gain.cancelScheduledValues(now);
+      v.amp.gain.setTargetAtTime(0.0001,now,0.02);
+      v.oscList.forEach(o=>{try{o.stop(now+0.15)}catch(e){}});
+      if(v.lfo){try{v.lfo.stop(now+0.15)}catch(e){}}
+    });
+  }
+  demoVoices.clear();
   resetSongBtns(); updateLabels();
+}
+// aplica el timbre y los ajustes del tema (pisa los sliders: para eso está, después los podés retocar)
+function applySongSound(s){
+  applyState({...params, ...s.sound, base:baseMidi, bpm:metroBpm});
+  savePreset();
 }
 function toggleSong(key){
   const was=playing;
   stopDemo();
   if(was===key) return;         // era esta misma → toggle off
   startEngine();
-  playing=key; demoTok++;
+  const s=SONGS[key];
+  applySongSound(s);
+  playing=key;
+  const t0=AC.currentTime+0.06;
+  seqState={key, idx:0, noteBeat:0, stepBeat:0, step:0, anchorT:t0, anchorBeat:0, spb:60/(s.bpm*params.speed)};
+  seqTick();
+  seqTimer=setInterval(seqTick,25);
   const b=songBtns[key];
   b.classList.add('playing');
   b.querySelector('span').textContent='⏸ Parar';
-  setStatus('Sonando: '+SONGS[key].label+' ('+SONGS[key].key+') · '+program.name);
+  setStatus(s.pending
+    ? `${s.label}: sólo ritmo a ${s.bpm} BPM (todavía no hay acordes publicados)`
+    : `Sonando: ${s.label} (${s.key}) · ${program.name} · ritmo ${s.groove}`);
   updateLabels();
-  runDemo(key,demoTok);
-}
-async function runDemo(key,tok){
-  const s=SONGS[key], src='d'+tok;   // src propio: si el demo viejo despierta tarde, no apaga notas del nuevo
-  const alive=()=>playing===key && tok===demoTok;
-  while(alive()){
-    for(const [n,beats] of s.seq){
-      if(!alive()) break;
-      const ms=beats*60000/(s.bpm*params.speed);   // se lee en cada nota: la velocidad cambia en vivo
-      const notes=n===null?[]:[].concat(n);
-      notes.forEach(m=>noteOn(m,src));
-      await sleep(ms*s.gate);
-      notes.forEach(m=>noteOff(m,src));
-      await sleep(ms*(1-s.gate));
-    }
-  }
 }
 
 /* ============ boot ============ */

@@ -38,29 +38,48 @@ Después abrí **http://localhost:8123/** en el navegador.
 
 ## 🎵 Cancionero
 
-Ocho temas que se tocan solos iluminando las teclas. Cada uno es la **base de acompañamiento**
+Nueve temas que se tocan solos iluminando las teclas. Cada uno es la **base de acompañamiento**
 del tema: tonalidad, progresión de acordes y tempo sacados de cifrados públicos, tocados con el
 ritmo típico del género (tresillo villero, bajo + acorde a contratiempo de la cumbia y el
 cuarteto, arpegio de balada). No incluye la melodía: la base suena como el tema y la melodía la
 tocás vos encima.
 
-| Tema | Artista | Tono | Tempo | Estilo |
-|------|---------|------|-------|--------|
-| La Resaka | Supermerk2 | La menor | ≈100 | tresillo villero |
-| Se Te Ve la Tanga | Damas Gratis | Re menor | ≈98 | tresillo villero |
-| No Me Arrepiento de Este Amor | Gilda | Do menor | ≈150 | cumbia |
-| El Bombón Asesino | Los Palmeras | Re menor | ≈100 | cumbia |
-| Mentirosa | Ráfaga | Fa menor | ≈94 | cumbia |
-| Soy Cordobés | Rodrigo | Mi menor | ≈125 | cuarteto (tunga-tunga) |
-| Fernet | Rei & Quevedo | Fa# menor | ≈100 | arpegio |
-| Un Beso y una Flor | Nino Bravo | La mayor | 83 | balada |
+Al elegir un tema **se configura solo**: carga el timbre y los ajustes (filtro, reverb, envolvente)
+que mejor le quedan, y arranca con su **ritmo de batería**. Después podés retocar todo a mano.
+
+| Tema | Artista | Tono | Tempo | Base | Timbre | Ritmo |
+|------|---------|------|-------|------|--------|-------|
+| La Resaka | Supermerk2 | La menor | ≈100 | tresillo villero | Synth Lead | villero |
+| Se Te Ve la Tanga | Damas Gratis | Re menor | ≈98 | tresillo villero | Synth Lead | villero |
+| No Me Arrepiento de Este Amor | Gilda | Do menor | ≈150 | contratiempo | Draw Organ | cumbia |
+| El Bombón Asesino | Los Palmeras | Re menor | ≈100 | contratiempo | Draw Organ | cumbia |
+| Mentirosa | Ráfaga | Fa menor | ≈94 | contratiempo | Synth Lead | cumbia |
+| Soy Cordobés | Rodrigo | Mi menor | ≈125 | tunga-tunga | Piano Acústico | cuarteto |
+| Fernet | Rei & Quevedo | Fa# menor | ≈100 | arpegio | Electric Piano | pop |
+| Un Beso y una Flor | Nino Bravo | La mayor | 83 | arpegio de balada | Piano Acústico | balada |
+| No Somos Perfectos | Lauta, Valentino Merlo & Tote | a confirmar | 87 | — | Piano Acústico | cumbia |
 
 `≈` = tempo estimado (no hay dato publicado). El slider **Velocidad** (50–150%) lo ajusta en
 vivo, así lo emparejás de oído con la grabación.
 
+*No Somos Perfectos* salió en agosto de 2026 y todavía no hay acordes publicados: por ahora toca
+sólo el ritmo a su tempo real. Cuando se confirme la progresión, se carga en su `seq`.
+
+### 🥁 Ritmo
+
+Batería sintetizada en vivo (bombo, redoblante, rim, hi-hat, timbal, congas y güiro, todo con
+osciladores y ruido, sin samples), con un patrón por género: `villero`, `cumbia`, `cuarteto`,
+`balada` y `pop`. Se prende/apaga con **RITMO** y tiene su propio volumen.
+
+Notas y batería se agendan juntas sobre el reloj del `AudioContext` (con lookahead, como el
+metrónomo), así van siempre a tiempo aunque cambies la velocidad en el medio.
+
+### Agregar un tema
+
 Los temas viven en el objeto `SONGS`: cada evento es `[nota, beats]`, donde la nota es un MIDI,
 un array de MIDIs (acorde) o `null` (silencio), y los helpers `trip`, `contra`, `arp` y `ballad`
-arman un compás por acorde. Agregar un tema es escribir su progresión, tono y tempo.
+arman un compás por acorde. Cada tema lleva además `sound` (timbre y ajustes) y `groove` (ritmo).
+Agregar uno es escribir su progresión, tono, tempo, sonido y ritmo.
 
 ## ⌨️ Cómo tocar
 
